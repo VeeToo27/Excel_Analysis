@@ -697,9 +697,7 @@ with tab1:
                 <div class="topper-name">{row['Name']}</div>
                 <div class="topper-roll">Roll No. {row['RollNo']} &nbsp;·&nbsp; {row.get('Status','')}</div>
             </div>
-            <div class="topper-score">{gt:.0f if not pd.isna(gt) else '–'}</div>
-        </div>
-        """, unsafe_allow_html=True)
+     <div class="topper-score">{(f'{gt:.0f}' if not pd.isna(gt) else '–')}</div>        """, unsafe_allow_html=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
