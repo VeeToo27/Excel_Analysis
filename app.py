@@ -244,7 +244,7 @@ with tab1:
     fig_grade = px.bar(
         grade_counts, x='Grade', y='Count', text='Count',
         color='Grade',
-        color_discrete_sequence=px.colors.sequential.RdYlGn[::-1],
+        color_discrete_sequence=px.colors.sequential.Reds[::-1],
         title="Overall Grade Distribution"
     )
     fig_grade.update_layout(showlegend=False, template="plotly_white")
@@ -272,7 +272,7 @@ with tab2:
         st.warning("No subject columns detected.")
     else:
         st.dataframe(
-            subject_df.style.background_gradient(subset=['Pass %'], cmap='RdYlGn')
+            subject_df.style.background_gradient(subset=['Pass %'], cmap='Reds')
                             .background_gradient(subset=['Failed Students'], cmap='Reds'),
             use_container_width=True
         )
@@ -318,7 +318,7 @@ with tab3:
 
         st.dataframe(
             faculty_df_final.sort_values('Pass %', ascending=False)
-                            .style.background_gradient(subset=['Pass %'], cmap='RdYlGn'),
+                            .style.background_gradient(subset=['Pass %'], cmap='Reds'),
             use_container_width=True
         )
 
@@ -331,7 +331,7 @@ with tab3:
             hover_name="Faculty Name",
             hover_data=["Subject Code", "Passed"],
             title="Faculty: Avg Marks vs Failures (size = failure count)",
-            color_continuous_scale="RdYlGn"
+            color_continuous_scale="Reds"
         )
         fig_scatter.add_hline(y=avg_fail,  line_dash="dash", line_color="red",
                               annotation_text="Avg Failures")
