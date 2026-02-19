@@ -546,6 +546,69 @@ weak_subjects = subj_df[
     (subj_df['Pass %'] < 60) | (subj_df['Failed Students'] > subj_df['Failed Students'].mean())
 ] if not subj_df.empty else pd.DataFrame()
 
+# ── Marks Band Table: Faculty | Subject | Code | <50% | 50-59% | 60-74% | ≥75% ──
+@st.cache_data(show_spinner=False)
+def compute_marks_band_table(df_json, faculty_json, stc_json):
+    df  = pd.read_json(df_json)
+    fac = pd.read_json(faculty_json)
+    stc = pd.read_json(stc_json, typ='series').to_dict()
+
+    # Build a subject_code → subject_name map if available, else use code
+    subj_name_map = {}
+    for _, row in fac.iterrows():
+        code = str(row.get('Subject Code', '')).strip()
+        name = str(row.get('Subject Name', row.get('Subject', code))).strip()
+        subj_name_map[code] = name
+
+    rows = []
+    for _, row in fac.iterrows():
+        code    = str(row.get('Subject Code', '')).strip()
+        faculty = row.get('Faculty Name', 'Unknown')
+        subject = subj_name_map.get(code, code)
+
+        if code not in stc or stc[code] not in df.columns:
+            continue
+
+        marks = pd.to_numeric(df[stc[code]], errors='coerce').dropna()
+        total = len(marks)
+        if total == 0:
+            continue
+
+        # Calculate max marks for this subject to derive percentage
+        # We assume marks are already out of some total; use the column max as proxy
+        col_max = marks.max()
+        # If max > 100, marks are likely raw; normalise to 100
+        # Otherwise treat as percentage directly
+        if col_max > 100:
+            pct = (marks / col_max) * 100
+        else:
+            pct = marks  # already percentage or out of 100
+
+        lt50   = int((pct < 50).sum())
+        b50_59 = int(((pct >= 50) & (pct < 60)).sum())
+        b60_74 = int(((pct >= 60) & (pct < 75)).sum())
+        gte75  = int((pct >= 75).sum())
+
+        rows.append({
+            "Faculty Name":  faculty,
+            "Subject":       subject,
+            "Code":          code,
+            "Total":         total,
+            "< 50%":         lt50,
+            "50 – 59.99%":   b50_59,
+            "60 – 74.99%":   b60_74,
+            "≥ 75%":         gte75,
+            "< 50% %share":  round(lt50   / total * 100, 1),
+            "50-59 %share":  round(b50_59 / total * 100, 1),
+            "60-74 %share":  round(b60_74 / total * 100, 1),
+            "≥75 %share":    round(gte75  / total * 100, 1),
+        })
+    return pd.DataFrame(rows)
+
+marks_band_df = compute_marks_band_table(
+    results_df.to_json(), faculty_raw.to_json(), stc_ser.to_json()
+)
+
 low_margin_list = []
 for code, col in stc.items():
     if col not in results_df.columns:
@@ -814,6 +877,107 @@ with tab3:
         fig_stack.update_layout(**CHART_THEME, xaxis_tickangle=-25, height=380)
         st.plotly_chart(fig_stack, use_container_width=True)
 
+        # ── Marks Band Table ─────────────────────────────────────
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📊 Subject-wise Marks Band Distribution</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="info-banner">
+            Counts and % share of students per marks band for every subject, grouped by faculty.
+        </div>
+        """, unsafe_allow_html=True)
+
+        if marks_band_df.empty:
+            st.markdown('<div class="warn-banner">⚠️ Could not compute marks band table — check subject code mapping.</div>', unsafe_allow_html=True)
+        else:
+            display_band = marks_band_df[[
+                "Faculty Name", "Subject", "Code", "Total",
+                "< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%"
+            ]].copy()
+
+            def fmt_cell(count, total):
+                pct = round(count / total * 100, 1) if total else 0
+                return f"{count}  ({pct}%)"
+
+            for col in ["< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%"]:
+                display_band[col] = display_band.apply(
+                    lambda r, c=col: fmt_cell(r[c], r["Total"]), axis=1
+                )
+
+            def build_html_table(df):
+                band_cols = ["< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%"]
+                col_colors = {
+                    "< 50%":        ("#FEF2F2", "#991B1B"),
+                    "50 – 59.99%":  ("#FFFBEB", "#92400E"),
+                    "60 – 74.99%":  ("#EFF6FF", "#1E40AF"),
+                    "≥ 75%":        ("#ECFDF5", "#065F46"),
+                }
+                header_colors = {
+                    "< 50%":        "#FCA5A5",
+                    "50 – 59.99%":  "#FDE68A",
+                    "60 – 74.99%":  "#93C5FD",
+                    "≥ 75%":        "#6EE7B7",
+                }
+                base_th = "padding:10px 14px;font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border:1px solid #E2E6F0;text-align:center;"
+                base_td = "padding:10px 14px;font-size:0.85rem;border:1px solid #E2E6F0;text-align:center;vertical-align:middle;"
+                html = '<div style="overflow-x:auto;border-radius:12px;border:1px solid #E2E6F0;box-shadow:0 2px 8px rgba(26,29,46,0.06)"><table style="width:100%;border-collapse:collapse;font-family:DM Sans,sans-serif"><thead><tr>'
+                all_cols = ["Faculty Name", "Subject", "Code", "Total"] + band_cols
+                for c in all_cols:
+                    bg = header_colors.get(c, "#1A1D2E")
+                    fc = "#1A1D2E" if c in band_cols else "#FFFFFF"
+                    html += f'<th style="{base_th}background:{bg};color:{fc}">{c}</th>'
+                html += "</tr></thead><tbody>"
+                for i, (_, row) in enumerate(df.iterrows()):
+                    row_bg = "#FFFFFF" if i % 2 == 0 else "#F7F8FC"
+                    html += f'<tr style="background:{row_bg}">'
+                    for c in all_cols:
+                        val = row[c]
+                        if c in band_cols:
+                            bg, fc = col_colors[c]
+                            html += f'<td style="{base_td}background:{bg};color:{fc};font-weight:500">{val}</td>'
+                        elif c == "Faculty Name":
+                            html += f'<td style="{base_td}font-weight:600;text-align:left;color:#1A1D2E">{val}</td>'
+                        elif c == "Total":
+                            html += f'<td style="{base_td}font-weight:600;color:#3D5A80">{val}</td>'
+                        else:
+                            html += f'<td style="{base_td}color:#374151;text-align:left">{val}</td>'
+                    html += "</tr>"
+                html += "</tbody></table></div>"
+                return html
+
+            st.markdown(build_html_table(display_band), unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # Stacked bar chart
+            st.markdown('<div class="section-title">Marks Band Distribution — Stacked Chart</div>', unsafe_allow_html=True)
+            band_raw = marks_band_df[["Code", "Faculty Name", "Total", "< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%"]].copy()
+            band_melt = band_raw.melt(
+                id_vars=["Code", "Faculty Name", "Total"],
+                value_vars=["< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%"],
+                var_name="Band", value_name="Count"
+            )
+            band_melt["Label"] = band_melt.apply(
+                lambda r: f"{r['Count']} ({round(r['Count']/r['Total']*100,1)}%)" if r['Total'] else "0", axis=1
+            )
+            fig_band = px.bar(
+                band_melt, x="Code", y="Count", color="Band",
+                barmode="stack", text="Label",
+                color_discrete_map={
+                    "< 50%":       "#EF4444",
+                    "50 – 59.99%": "#F59E0B",
+                    "60 – 74.99%": "#3B82F6",
+                    "≥ 75%":       "#10B981",
+                },
+                title="Students per Marks Band by Subject",
+                labels={"Code": "Subject Code", "Count": "No. of Students"},
+                category_orders={"Band": ["< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%"]}
+            )
+            fig_band.update_traces(textposition='inside', textfont_size=11)
+            fig_band.update_layout(
+                **CHART_THEME, height=420,
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
+            )
+            st.plotly_chart(fig_band, use_container_width=True)
+
 # ════════════════════════════════════════════════
 # TAB 4 – STUDENT DETAILS
 # ════════════════════════════════════════════════
@@ -1021,6 +1185,21 @@ with tab6:
                     else:         cell.fill = PatternFill("solid", fgColor="FFC7CE")
 
     out = BytesIO()
+    # Prepare clean marks band export (counts only, no formatted strings)
+    marks_band_export = pd.DataFrame()
+    if not marks_band_df.empty:
+        marks_band_export = marks_band_df[[
+            "Faculty Name", "Subject", "Code", "Total",
+            "< 50%", "50 – 59.99%", "60 – 74.99%", "≥ 75%",
+            "< 50% %share", "50-59 %share", "60-74 %share", "≥75 %share"
+        ]].copy()
+        marks_band_export.rename(columns={
+            "< 50% %share":  "< 50% (%)",
+            "50-59 %share":  "50–59.99% (%)",
+            "60-74 %share":  "60–74.99% (%)",
+            "≥75 %share":    "≥ 75% (%)",
+        }, inplace=True)
+
     export_sheets = {
         "Overview": pd.DataFrame({
             "Metric": ["Total Students","Passed","Failed","Later/Back","First Division",
@@ -1030,6 +1209,7 @@ with tab6:
         }),
         "Subject Analysis":    subj_df,
         "Faculty Analysis":    fac_df,
+        "Marks Band":          marks_band_export if not marks_band_export.empty else pd.DataFrame({"Note": ["No data"]}),
         "Weak Subjects":       weak_subjects if not weak_subjects.empty else pd.DataFrame({"Note": ["No weak subjects detected"]}),
         "Low Margin Failures": low_margin_df if not low_margin_df.empty else pd.DataFrame({"Note": ["No low-margin failures"]}),
         "Top 5 Toppers":       top5,
@@ -1038,6 +1218,7 @@ with tab6:
     }
     accents = {
         "Overview":"1A1D2E", "Subject Analysis":"1E3A5F", "Faculty Analysis":"14532D",
+        "Marks Band":"1A3A5F",
         "Weak Subjects":"7F1D1D", "Low Margin Failures":"78350F",
         "Top 5 Toppers":"4C1D95", "Failed Students":"7F1D1D", "All Students":"1E3A5F"
     }
@@ -1051,6 +1232,28 @@ with tab6:
             style_ws(ws, accents.get(name, "1A1D2E"))
             if name in ("Subject Analysis", "Faculty Analysis"):
                 apply_pass_color(ws)
+            if name == "Marks Band":
+                # Colour-code each band column header and cells
+                headers = [c.value for c in ws[1]]
+                band_col_map = {
+                    "< 50%":          ("FFC7CE", "9C0006"),
+                    "50 – 59.99%":    ("FFEB9C", "9C6500"),
+                    "60 – 74.99%":    ("BDD7EE", "1F3864"),
+                    "≥ 75%":          ("C6EFCE", "276221"),
+                    "< 50% (%)":      ("FFC7CE", "9C0006"),
+                    "50–59.99% (%)":  ("FFEB9C", "9C6500"),
+                    "60–74.99% (%)":  ("BDD7EE", "1F3864"),
+                    "≥ 75% (%)":      ("C6EFCE", "276221"),
+                }
+                for ci, h in enumerate(headers, start=1):
+                    if h in band_col_map:
+                        bg, fc = band_col_map[h]
+                        ws[1][ci-1].fill = PatternFill("solid", fgColor=bg)
+                        ws[1][ci-1].font = Font(bold=True, color=fc, name="Calibri", size=10)
+                        for row in ws.iter_rows(min_row=2, min_col=ci, max_col=ci):
+                            for cell in row:
+                                cell.fill = PatternFill("solid", fgColor=bg)
+                                cell.font = Font(color=fc, name="Calibri", size=9)
 
     col_dl, col_info2 = st.columns([1, 1])
     with col_dl:
@@ -1062,8 +1265,8 @@ with tab6:
         )
         st.markdown("""
         <div class="info-banner" style="margin-top:14px">
-            <strong>Report includes 8 sheets:</strong><br>
-            Overview · Subject Analysis · Faculty Analysis ·
+            <strong>Report includes 9 sheets:</strong><br>
+            Overview · Subject Analysis · Faculty Analysis · <strong>Marks Band</strong> ·
             Weak Subjects · Low-Margin Failures · Top 5 Toppers ·
             Failed Students · All Students<br><br>
             Formatted with alternating row colours, colour-coded Pass % cells
@@ -1088,5 +1291,3 @@ st.markdown("""
     All data is processed locally in your browser session and is never stored or transmitted.
 </div>
 """, unsafe_allow_html=True)
-
-
