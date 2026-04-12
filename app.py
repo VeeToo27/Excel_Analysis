@@ -321,7 +321,10 @@ def compute_toppers(df, n=10):
     name_col = find_col(df, ['candidate name', 'candidate_name', 'name'])
     roll_col = find_col(df, ['roll no', 'roll_no', 'rollno'])
     pct_col  = find_col(df, ['per_%.1', 'per_%', 'percentage', 'per'])
-
+    if pct_col:
+        out[pct_col] = pd.to_numeric(out[pct_col], errors='coerce').round(2)
+        out[pct_col] = out[pct_col].map(lambda x: f"{x:.2f}%" if pd.notnull(x) else "")
+    
     sel = [c for c in [roll_col, name_col, sort_col, pct_col] if c]
     out = df[sel].copy()
     out[sort_col] = pd.to_numeric(out[sort_col], errors='coerce')
